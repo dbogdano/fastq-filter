@@ -159,6 +159,21 @@ def filter_fastq(input_files: List[str], output_files: List[str],
                     output.write(record.fastq_bytes())
 
 
+def parse_threshold(value: str, converter=float):
+    """Parse a threshold value that can be a single value or comma-separated list.
+    
+    Args:
+        value: String like "30" or "30,25,20" for per-read thresholds
+        converter: Function to convert each value (float or int)
+    
+    Returns:
+        Single value or tuple of values
+    """
+    if ',' in value:
+        return tuple(converter(v.strip()) for v in value.split(','))
+    return converter(value)
+
+
 def initiate_logger(verbose: int = 0, quiet: int = 0):
     log_level = logging.INFO - 10 * (verbose - quiet)
     logger = logging.getLogger("fastq-filter")
@@ -186,19 +201,25 @@ def argument_parser() -> argparse.ArgumentParser:
                              "Flag can be used multiple times. An output must "
                              "be given for each input. Default: stdout.",
                         action='append')
-    parser.add_argument("-l", "--min-length", type=int,
-                        help="The minimum length for a read.")
-    parser.add_argument("-L", "--max-length", type=int,
-                        help="The maximum length for a read.")
-    parser.add_argument("-e", "--average-error-rate", type=float,
-                        help="The minimum average per base error rate.")
-    parser.add_argument("-q", "--mean-quality", type=int,
+    parser.add_argument("-l", "--min-length", type=str,
+                        help="The minimum length for a read. Use comma-separated "
+                             "values for per-read thresholds (e.g., '50,60' for "
+                             "R1 and R2).")
+    parser.add_argument("-L", "--max-length", type=str,
+                        help="The maximum length for a read. Use comma-separated "
+                             "values for per-read thresholds (e.g., '150,150').")
+    parser.add_argument("-e", "--average-error-rate", type=str,
+                        help="The minimum average per base error rate. Use comma-separated "
+                             "values for per-read thresholds (e.g., '0.01,0.02').")
+    parser.add_argument("-q", "--mean-quality", type=str,
                         help="Average quality. Same as the "
                              "'--average-error-rate' option but specified "
                              "with a phred score. I.e '-q 30' is equivalent "
-                             "to '-e 0.001'.")
-    parser.add_argument("-Q", "--median-quality", type=int,
-                        help="The minimum median phred score.")
+                             "to '-e 0.001'. Use comma-separated values for "
+                             "per-read thresholds (e.g., '30,25').")
+    parser.add_argument("-Q", "--median-quality", type=str,
+                        help="The minimum median phred score. Use comma-separated "
+                             "values for per-read thresholds (e.g., '30,25').")
     parser.add_argument("-c", "--compression-level", type=int,
                         default=DEFAULT_COMPRESSION_LEVEL,
                         help=f"Compression level for the output files. "
@@ -224,18 +245,27 @@ def main():
 
     # Filters are ordered from low cost to high cost.
     if args.min_length:
-        filters.append(MinimumLengthFilter(args.min_length))
+        threshold = parse_threshold(args.min_length, int)
+        filters.append(MinimumLengthFilter(threshold))
     if args.max_length:
-        filters.append(MaximumLengthFilter(args.max_length))
+        threshold = parse_threshold(args.max_length, int)
+        filters.append(MaximumLengthFilter(threshold))
     if args.average_error_rate:
-        filters.append(AverageErrorRateFilter(args.average_error_rate))
+        threshold = parse_threshold(args.average_error_rate, float)
+        filters.append(AverageErrorRateFilter(threshold))
     if args.mean_quality:
-        error_rate = 10 ** -(args.mean_quality / 10)
+        mean_qual = parse_threshold(args.mean_quality, int)
+        if isinstance(mean_qual, tuple):
+            error_rate = tuple(10 ** -(q / 10) for q in mean_qual)
+        else:
+            error_rate = 10 ** -(mean_qual / 10)
         filters.append(AverageErrorRateFilter(error_rate))
     if args.median_quality:
-        filters.append(MedianQualityFilter(args.median_quality))
+        threshold = parse_threshold(args.median_quality, int)
+        filters.append(MedianQualityFilter(threshold))
     for filter in filters:
-        log.info(f"{filter.name}: {filter.threshold}")
+        threshold_str = filter.threshold if not isinstance(filter.threshold, tuple) else ','.join(map(str, filter.threshold))
+        log.info(f"{filter.name}: {threshold_str}")
     if not filters:
         log.warning("No filters were applied. Was this intentional?")
 
