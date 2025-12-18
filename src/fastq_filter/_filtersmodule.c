@@ -291,6 +291,8 @@ typedef struct {
     double *threshold_d_array;
     Py_ssize_t *threshold_i_array;
     Py_ssize_t threshold_array_length;
+    Py_ssize_t *filter_indices;  // Which read positions to filter (0-based)
+    Py_ssize_t filter_indices_length;  // Number of indices to filter
     PyTypeObject *sequence_record_class;
     PyObject *sequence_record_atrr;
     uint8_t phred_offset;
@@ -304,6 +306,9 @@ FastqFilter_dealloc(FastqFilter *self)
     }
     if (self->threshold_i_array != NULL) {
         PyMem_Free(self->threshold_i_array);
+    }
+    if (self->filter_indices != NULL) {
+        PyMem_Free(self->filter_indices);
     }
     Py_CLEAR(self->sequence_record_class);
     Py_CLEAR(self->sequence_record_atrr);
@@ -348,12 +353,14 @@ GenericQualityFilter__new__(PyTypeObject *type, PyObject *args, PyObject *kwargs
 {
     uint8_t phred_offset = DEFAULT_PHRED_SCORE_OFFSET;
     PyObject *threshold_obj = NULL;
-    static char *kwarg_names[] = {"threshold", "phred_offset", NULL};
-    static const char *format = "O|$b:";
+    PyObject *filter_indices_obj = NULL;
+    static char *kwarg_names[] = {"threshold", "phred_offset", "filter_indices", NULL};
+    static const char *format = "O|$bO:";
     if (!PyArg_ParseTupleAndKeywords(
         args, kwargs, format, kwarg_names,
         &threshold_obj,
-        &phred_offset)) {
+        &phred_offset,
+        &filter_indices_obj)) {
             return NULL;
     }
     PyTypeObject *sequence_record_class = import_dnaio_sequence_record();
@@ -374,6 +381,8 @@ GenericQualityFilter__new__(PyTypeObject *type, PyObject *args, PyObject *kwargs
     self->threshold_d_array = NULL;
     self->threshold_i_array = NULL;
     self->threshold_array_length = 0;
+    self->filter_indices = NULL;
+    self->filter_indices_length = 0;
     
     // Check if threshold is a sequence or a single value
     if (PySequence_Check(threshold_obj) && !PyUnicode_Check(threshold_obj)) {
@@ -412,6 +421,41 @@ GenericQualityFilter__new__(PyTypeObject *type, PyObject *args, PyObject *kwargs
         }
         self->threshold_d = threshold_d;
     }
+    
+    // Parse filter_indices if provided
+    if (filter_indices_obj != NULL && filter_indices_obj != Py_None) {
+        if (!PySequence_Check(filter_indices_obj)) {
+            PyErr_SetString(PyExc_TypeError, "filter_indices must be a sequence");
+            Py_DECREF(self);
+            return NULL;
+        }
+        Py_ssize_t length = PySequence_Length(filter_indices_obj);
+        if (length < 0) {
+            Py_DECREF(self);
+            return NULL;
+        }
+        self->filter_indices_length = length;
+        self->filter_indices = PyMem_Malloc(length * sizeof(Py_ssize_t));
+        if (self->filter_indices == NULL) {
+            Py_DECREF(self);
+            return PyErr_NoMemory();
+        }
+        for (Py_ssize_t i = 0; i < length; i++) {
+            PyObject *item = PySequence_GetItem(filter_indices_obj, i);
+            if (item == NULL) {
+                Py_DECREF(self);
+                return NULL;
+            }
+            Py_ssize_t idx = PyLong_AsSsize_t(item);
+            Py_DECREF(item);
+            if (idx == -1 && PyErr_Occurred()) {
+                Py_DECREF(self);
+                return NULL;
+            }
+            self->filter_indices[i] = idx;
+        }
+    }
+    
     return (PyObject *)self;
 }
 
@@ -420,11 +464,13 @@ GenericLengthFilter__new__(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
     uint8_t phred_offset = DEFAULT_PHRED_SCORE_OFFSET;
     PyObject *threshold_obj = NULL;
-    static char *kwarg_names[] = {"threshold", NULL};
-    static const char *format = "O|:";
+    PyObject *filter_indices_obj = NULL;
+    static char *kwarg_names[] = {"threshold", "filter_indices", NULL};
+    static const char *format = "O|O:";
     if (!PyArg_ParseTupleAndKeywords(
         args, kwargs, format, kwarg_names,
-        &threshold_obj)) {
+        &threshold_obj,
+        &filter_indices_obj)) {
             return NULL;
     }
     PyTypeObject *sequence_record_class = import_dnaio_sequence_record();
@@ -441,6 +487,8 @@ GenericLengthFilter__new__(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->threshold_d_array = NULL;
     self->threshold_i_array = NULL;
     self->threshold_array_length = 0;
+    self->filter_indices = NULL;
+    self->filter_indices_length = 0;
     
     // Check if threshold is a sequence or a single value
     if (PySequence_Check(threshold_obj) && !PyUnicode_Check(threshold_obj)) {
@@ -479,6 +527,41 @@ GenericLengthFilter__new__(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         }
         self->threshold_i = threshold_i;
     }
+    
+    // Parse filter_indices if provided
+    if (filter_indices_obj != NULL && filter_indices_obj != Py_None) {
+        if (!PySequence_Check(filter_indices_obj)) {
+            PyErr_SetString(PyExc_TypeError, "filter_indices must be a sequence");
+            Py_DECREF(self);
+            return NULL;
+        }
+        Py_ssize_t length = PySequence_Length(filter_indices_obj);
+        if (length < 0) {
+            Py_DECREF(self);
+            return NULL;
+        }
+        self->filter_indices_length = length;
+        self->filter_indices = PyMem_Malloc(length * sizeof(Py_ssize_t));
+        if (self->filter_indices == NULL) {
+            Py_DECREF(self);
+            return PyErr_NoMemory();
+        }
+        for (Py_ssize_t i = 0; i < length; i++) {
+            PyObject *item = PySequence_GetItem(filter_indices_obj, i);
+            if (item == NULL) {
+                Py_DECREF(self);
+                return NULL;
+            }
+            Py_ssize_t idx = PyLong_AsSsize_t(item);
+            Py_DECREF(item);
+            if (idx == -1 && PyErr_Occurred()) {
+                Py_DECREF(self);
+                return NULL;
+            }
+            self->filter_indices[i] = idx;
+        }
+    }
+    
     return (PyObject *)self;
 }
 
@@ -552,61 +635,143 @@ AverageErrorRateFilter__call__(FastqFilter *self, PyObject *args, PyObject *kwar
     
     if (self->threshold_d_array != NULL) {
         // Per-read filtering: each read must pass its own threshold
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
-            if (phred_scores == NULL) {
-                return NULL;
-            }
-            if (phred_scores == Py_None) {
-                PyErr_Format(
-                    PyExc_ValueError,
-                    "SequenceRecord object with name %R does not have quality scores "
-                    "(FASTA record)", PyObject_GetAttrString(record, "name")
-                );
+        // If filter_indices is set, only check those reads
+        if (self->filter_indices != NULL) {
+            // Only filter specific read indices
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                phreds = PyUnicode_DATA(phred_scores);
+                phred_length = PyUnicode_GET_LENGTH(phred_scores);
+                double error_rate = average_error_rate(phreds, phred_length, phred_offset);
                 Py_DECREF(phred_scores);
-                return NULL;
+                if (error_rate < 0) {
+                    return NULL; 
+                }
+                if (error_rate > self->threshold_d_array[i]) {
+                    pass = 0;
+                    break;
+                }
             }
-            phreds = PyUnicode_DATA(phred_scores);
-            phred_length = PyUnicode_GET_LENGTH(phred_scores);
-            double error_rate = average_error_rate(phreds, phred_length, phred_offset);
-            Py_DECREF(phred_scores);
-            if (error_rate < 0) {
-                return NULL; 
-            }
-            if (error_rate > self->threshold_d_array[i]) {
-                pass = 0;
-                break;  // Short-circuit: if any read fails, tuple fails
+        } else {
+            // Filter all reads
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                phreds = PyUnicode_DATA(phred_scores);
+                phred_length = PyUnicode_GET_LENGTH(phred_scores);
+                double error_rate = average_error_rate(phreds, phred_length, phred_offset);
+                Py_DECREF(phred_scores);
+                if (error_rate < 0) {
+                    return NULL; 
+                }
+                if (error_rate > self->threshold_d_array[i]) {
+                    pass = 0;
+                    break;  // Short-circuit: if any read fails, tuple fails
+                }
             }
         }
     } else {
-        // Original behavior: aggregate all reads and check single threshold
+        // Single threshold: aggregate reads or filter selective indices
         double total_error_sum = 0.0;
         size_t length_sum = 0;
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
-            if (phred_scores == NULL) {
-                return NULL;
-            }
-            if (phred_scores == Py_None) {
-                PyErr_Format(
-                    PyExc_ValueError,
-                    "SequenceRecord object with name %R does not have quality scores "
-                    "(FASTA record)", PyObject_GetAttrString(record, "name")
-                );
+        
+        if (self->filter_indices != NULL) {
+            // Filter only specific read indices with single threshold
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                phreds = PyUnicode_DATA(phred_scores);
+                phred_length = PyUnicode_GET_LENGTH(phred_scores);
+                double error_sum = sum_error_rate(phreds, phred_length, phred_offset);
                 Py_DECREF(phred_scores);
-                return NULL;
+                if (error_sum < 0) {
+                    return NULL;
+                }
+                total_error_sum += error_sum;
+                length_sum += phred_length;
             }
-            phreds = PyUnicode_DATA(phred_scores);
-            phred_length = PyUnicode_GET_LENGTH(phred_scores);
-            double error_sum = sum_error_rate(phreds, phred_length, phred_offset);
-            Py_DECREF(phred_scores);
-            if (error_sum < 0) {
-                return NULL; 
+        } else {
+            // Original behavior: aggregate all reads
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                phreds = PyUnicode_DATA(phred_scores);
+                phred_length = PyUnicode_GET_LENGTH(phred_scores);
+                double error_sum = sum_error_rate(phreds, phred_length, phred_offset);
+                Py_DECREF(phred_scores);
+                if (error_sum < 0) {
+                    return NULL; 
+                }
+                total_error_sum += error_sum;
+                length_sum += phred_length;
             }
-            total_error_sum += error_sum;
-            length_sum += phred_length;
         }
         double error_rate = total_error_sum / (double)length_sum;
         pass = error_rate <= self->threshold_d;
@@ -647,61 +812,142 @@ MedianQualityFilter__call__(FastqFilter *self, PyObject *args, PyObject *kwargs)
     
     if (self->threshold_d_array != NULL) {
         // Per-read filtering: each read must pass its own threshold
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            PyObject *phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
-            if (phred_scores == NULL) {
-                return NULL;
-            }
-            if (phred_scores == Py_None) {
-                PyErr_Format(
-                    PyExc_ValueError,
-                    "SequenceRecord object with name %R does not have quality scores "
-                    "(FASTA record)", PyObject_GetAttrString(record, "name")
-                );
+        // If filter_indices is set, only check those reads
+        if (self->filter_indices != NULL) {
+            // Only filter specific read indices
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                PyObject *phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                uint8_t *phreds = PyUnicode_DATA(phred_scores);
+                Py_ssize_t phred_length = PyUnicode_GetLength(phred_scores);
+                double median = qualmedian(phreds, phred_length, phred_offset);
                 Py_DECREF(phred_scores);
-                return NULL;
+                if (median < 0.0) {
+                    return NULL;
+                }
+                if (median < self->threshold_d_array[i]) {
+                    pass = 0;
+                    break;
+                }
             }
-            uint8_t *phreds = PyUnicode_DATA(phred_scores);
-            Py_ssize_t phred_length = PyUnicode_GetLength(phred_scores);
-            double median = qualmedian(phreds, phred_length, phred_offset);
-            Py_DECREF(phred_scores);
-            if (median < 0.0) {
-                return NULL;
-            }
-            if (median < self->threshold_d_array[i]) {
-                pass = 0;
-                break;  // Short-circuit: if any read fails, tuple fails
+        } else {
+            // Filter all reads
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                PyObject *phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                uint8_t *phreds = PyUnicode_DATA(phred_scores);
+                Py_ssize_t phred_length = PyUnicode_GetLength(phred_scores);
+                double median = qualmedian(phreds, phred_length, phred_offset);
+                Py_DECREF(phred_scores);
+                if (median < 0.0) {
+                    return NULL;
+                }
+                if (median < self->threshold_d_array[i]) {
+                    pass = 0;
+                    break;  // Short-circuit: if any read fails, tuple fails
+                }
             }
         }
     } else {
-        // Original behavior: aggregate all reads and check single threshold
+        // Single threshold: aggregate reads or filter selective indices
         size_t total_phred_length = 0;
         size_t histogram[128];
         memset(histogram, 0, sizeof(size_t) * 128);
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            PyObject *phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
-            if (phred_scores == NULL) {
-                return NULL;
-            }
-            if (phred_scores == Py_None) {
-                PyErr_Format(
-                    PyExc_ValueError,
-                    "SequenceRecord object with name %R does not have quality scores "
-                    "(FASTA record)", PyObject_GetAttrString(record, "name")
-                );
+        
+        if (self->filter_indices != NULL) {
+            // Filter only specific read indices with single threshold
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                PyObject *phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                uint8_t *phreds = PyUnicode_DATA(phred_scores);
+                Py_ssize_t phred_length = PyUnicode_GetLength(phred_scores);
+                ret = make_histogram(histogram, phreds, phred_length, phred_offset);
                 Py_DECREF(phred_scores);
-                return NULL;
+                if (ret != 0) {
+                    return NULL;
+                }
+                total_phred_length += phred_length;
             }
-            uint8_t *phreds = PyUnicode_DATA(phred_scores);
-            Py_ssize_t phred_length = PyUnicode_GetLength(phred_scores);
-            ret = make_histogram(histogram, phreds, phred_length, phred_offset);
-            Py_DECREF(phred_scores);
-            if (ret != 0) {
-                return NULL;
+        } else {
+            // Original behavior: aggregate all reads
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                PyObject *phred_scores = PyObject_GetAttr(record, self->sequence_record_atrr);
+                if (phred_scores == NULL) {
+                    return NULL;
+                }
+                if (phred_scores == Py_None) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "SequenceRecord object with name %R does not have quality scores "
+                        "(FASTA record)", PyObject_GetAttrString(record, "name")
+                    );
+                    Py_DECREF(phred_scores);
+                    return NULL;
+                }
+                uint8_t *phreds = PyUnicode_DATA(phred_scores);
+                Py_ssize_t phred_length = PyUnicode_GetLength(phred_scores);
+                ret = make_histogram(histogram, phreds, phred_length, phred_offset);
+                Py_DECREF(phred_scores);
+                if (ret != 0) {
+                    return NULL;
+                }
+                total_phred_length += phred_length;
             }
-            total_phred_length += phred_length;
         }
         double median = median_from_histogram(histogram, total_phred_length, phred_offset);
         if (median < 0.0) {
@@ -744,30 +990,82 @@ MinLengthFilter__call__(FastqFilter *self, PyObject *args, PyObject *kwargs)
     
     if (self->threshold_i_array != NULL) {
         // Per-read filtering: all reads must pass their respective thresholds
+        // If filter_indices is set, only check those reads
         pass = 1;
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            Py_ssize_t length = PyObject_Length(record);
-            if (length < 0) {
-                return NULL;
+        if (self->filter_indices != NULL) {
+            // Only filter specific read indices
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length < self->threshold_i_array[i]) {
+                    pass = 0;
+                    break;
+                }
             }
-            if (length < self->threshold_i_array[i]) {
-                pass = 0;
-                break;
+        } else {
+            // Filter all reads
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length < self->threshold_i_array[i]) {
+                    pass = 0;
+                    break;
+                }
             }
         }
     } else {
-        // Original behavior: pass if ANY record meets the threshold
+        // Single threshold: filter selective indices or all reads
         pass = 0;
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            Py_ssize_t length = PyObject_Length(record);
-            if (length < 0) {
-                return NULL;
+        
+        if (self->filter_indices != NULL) {
+            // Filter only specific read indices with single threshold
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length >= self->threshold_i) {
+                    pass = 1;
+                    break;
+                }
             }
-            if (length >= self->threshold_i) {
-                pass = 1;
-                break;
+        } else {
+            // Original behavior: pass if ANY record meets the threshold
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length >= self->threshold_i) {
+                    pass = 1;
+                    break;
+                }
             }
         }
     }
@@ -805,30 +1103,82 @@ MaxLengthFilter__call__(FastqFilter *self, PyObject *args, PyObject *kwargs)
     
     if (self->threshold_i_array != NULL) {
         // Per-read filtering: all reads must pass their respective thresholds
+        // If filter_indices is set, only check those reads
         pass = 1;
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            Py_ssize_t length = PyObject_Length(record);
-            if (length < 0) {
-                return NULL;
+        if (self->filter_indices != NULL) {
+            // Only filter specific read indices
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length > self->threshold_i_array[i]) {
+                    pass = 0;
+                    break;
+                }
             }
-            if (length > self->threshold_i_array[i]) {
-                pass = 0;
-                break;
+        } else {
+            // Filter all reads
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length > self->threshold_i_array[i]) {
+                    pass = 0;
+                    break;
+                }
             }
         }
     } else {
-        // Original behavior: fail if ANY record exceeds the threshold
+        // Single threshold: filter selective indices or all reads
         pass = 1;
-        for (Py_ssize_t i=0; i < record_tuple_length; i++) {
-            record = PyTuple_GET_ITEM(record_tuple, i);
-            Py_ssize_t length = PyObject_Length(record);
-            if (length < 0) {
-                return NULL;
+        
+        if (self->filter_indices != NULL) {
+            // Filter only specific read indices with single threshold
+            for (Py_ssize_t idx=0; idx < self->filter_indices_length; idx++) {
+                Py_ssize_t i = self->filter_indices[idx];
+                if (i < 0 || i >= record_tuple_length) {
+                    PyErr_Format(
+                        PyExc_ValueError,
+                        "Filter index %zd out of range for %zd reads",
+                        i, record_tuple_length
+                    );
+                    return NULL;
+                }
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length > self->threshold_i) {
+                    pass = 0;
+                    break;
+                }
             }
-            if (length > self->threshold_i) {
-                pass = 0;
-                break;
+        } else {
+            // Original behavior: fail if ANY record exceeds the threshold
+            for (Py_ssize_t i=0; i < record_tuple_length; i++) {
+                record = PyTuple_GET_ITEM(record_tuple, i);
+                Py_ssize_t length = PyObject_Length(record);
+                if (length < 0) {
+                    return NULL;
+                }
+                if (length > self->threshold_i) {
+                    pass = 0;
+                    break;
+                }
             }
         }
     }

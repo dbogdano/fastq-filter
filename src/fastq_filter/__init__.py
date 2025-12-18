@@ -226,6 +226,11 @@ def argument_parser() -> argparse.ArgumentParser:
                              f"Relevant when output files have a .gz "
                              f"extension. Default: {DEFAULT_COMPRESSION_LEVEL}"
                         )
+    parser.add_argument("--apply-filters-to", type=str,
+                        help="Comma-separated 1-based indices of which reads to filter. "
+                             "For example, '1' filters only R1, '1,2' filters both R1 and R2. "
+                             "If not specified and per-read thresholds are given, all reads are filtered. "
+                             "This allows filtering on one read while keeping pairs synchronized.")
     parser.add_argument("--verbose", action="count", default=0,
                         help="Report stats on individual filters.")
     parser.add_argument("--quiet", action="count", default=0,
@@ -243,26 +248,33 @@ def main():
     log.info(f"input files: {', '.join(args.input)}")
     log.info(f"output files: {', '.join(output)}")
 
+    # Parse filter indices (1-based from CLI, converted to 0-based for C)
+    filter_indices = None
+    if args.apply_filters_to:
+        indices_1based = [int(x.strip()) for x in args.apply_filters_to.split(',')]
+        filter_indices = tuple(i - 1 for i in indices_1based)  # Convert to 0-based
+        log.info(f"Filtering only reads at positions: {', '.join(map(str, indices_1based))}")
+    
     # Filters are ordered from low cost to high cost.
     if args.min_length:
         threshold = parse_threshold(args.min_length, int)
-        filters.append(MinimumLengthFilter(threshold))
+        filters.append(MinimumLengthFilter(threshold, filter_indices=filter_indices))
     if args.max_length:
         threshold = parse_threshold(args.max_length, int)
-        filters.append(MaximumLengthFilter(threshold))
+        filters.append(MaximumLengthFilter(threshold, filter_indices=filter_indices))
     if args.average_error_rate:
         threshold = parse_threshold(args.average_error_rate, float)
-        filters.append(AverageErrorRateFilter(threshold))
+        filters.append(AverageErrorRateFilter(threshold, filter_indices=filter_indices))
     if args.mean_quality:
         mean_qual = parse_threshold(args.mean_quality, int)
         if isinstance(mean_qual, tuple):
             error_rate = tuple(10 ** -(q / 10) for q in mean_qual)
         else:
             error_rate = 10 ** -(mean_qual / 10)
-        filters.append(AverageErrorRateFilter(error_rate))
+        filters.append(AverageErrorRateFilter(error_rate, filter_indices=filter_indices))
     if args.median_quality:
         threshold = parse_threshold(args.median_quality, int)
-        filters.append(MedianQualityFilter(threshold))
+        filters.append(MedianQualityFilter(threshold, filter_indices=filter_indices))
     for filter in filters:
         threshold_str = filter.threshold if not isinstance(filter.threshold, tuple) else ','.join(map(str, filter.threshold))
         log.info(f"{filter.name}: {threshold_str}")
