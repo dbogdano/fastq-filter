@@ -72,7 +72,7 @@ def fastq_records_to_file(records: Iterable[dnaio.Sequence], filepath: str,
             output_h.write(record.fastq_bytes())
 
 
-def multiple_files_to_records(input_files: List[str],
+def multiple_files_to_records(input_files: List[str], threads: int = 0
                               ) -> Iterator[Tuple[dnaio.SequenceRecord, ...]]:
     readers = [file_to_fastq_records(f) for f in input_files]
     iterators = [iter(reader) for reader in readers]
@@ -110,7 +110,8 @@ def multiple_files_to_records(input_files: List[str],
 
 def filter_fastq(input_files: List[str], output_files: List[str],
                  filters: List[Callable[[Tuple[dnaio.SequenceRecord, ...]], bool]],
-                 compression_level: int = DEFAULT_COMPRESSION_LEVEL):
+                 compression_level: int = DEFAULT_COMPRESSION_LEVEL,
+                 threads: int = 0):
     """
     Filter FASTQ input files with the filters in filters and write
     the results to the output file.
@@ -125,14 +126,14 @@ def filter_fastq(input_files: List[str], output_files: List[str],
     """
     if len(input_files) != len(output_files):
         raise ValueError("Number of inputs and outputs should be equal.")
-    filtered_fastq_records = multiple_files_to_records(input_files)
+    filtered_fastq_records = multiple_files_to_records(input_files, threads=threads)
     for filter_func in filters:
         filtered_fastq_records = filter(filter_func, filtered_fastq_records)
     with contextlib.ExitStack() as output_stack:
         outputs = [output_stack.enter_context(
-                   xopen.xopen(output_file, threads=0, mode="wb",
-                               compresslevel=compression_level))
-                   for output_file in output_files]
+               xopen.xopen(output_file, threads=threads, mode="wb",
+                       compresslevel=compression_level))
+               for output_file in output_files]
         # Use faster methods for more common cases before falling back to
         # generic multiple files mode (which is slower).
         if len(outputs) == 1:
@@ -231,6 +232,8 @@ def argument_parser() -> argparse.ArgumentParser:
                              f"Relevant when output files have a .gz "
                              f"extension. Default: {DEFAULT_COMPRESSION_LEVEL}"
                         )
+        parser.add_argument("--threads", type=int, default=0,
+                        help="Number of threads to use for compression/decompression (passed to xopen). 0 means single-threaded.")
     parser.add_argument("--apply-filters-to", type=str,
                         help="Comma-separated 1-based indices of which reads to filter. "
                              "For example, '1' filters only R1, '1,2' filters both R1 and R2. "
@@ -252,6 +255,7 @@ def main():
     if getattr(args, "flag_inputs", None):
         inputs.extend(args.flag_inputs)
     output = args.output if args.output else ["-"]
+    threads = getattr(args, "threads", 0)
     filters = []
 
     initiate_logger(args.verbose, args.quiet)
@@ -295,7 +299,8 @@ def main():
     filter_fastq(filters=filters,
                  input_files=inputs,
                  output_files=output,
-                 compression_level=args.compression_level)
+                 compression_level=args.compression_level,
+                 threads=threads)
 
     if filters:
         total = filters[0].total
