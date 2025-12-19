@@ -191,26 +191,21 @@ def initiate_logger(verbose: int = 0, quiet: int = 0):
 def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.description = "Filter FASTQ files on various metrics."
-    # Inputs: support both positional and -i/--input flag; they are combined
-    parser.add_argument("input",
-                        help="Input FASTQ files. Compression format "
-                             "automatically detected. Use - for stdin. "
-                             "Alternatively, use -i/--input to provide files explicitly.",
-                        nargs='*')
+    # Inputs: support both positional and -i/--input flags; combine them in main()
+    parser.add_argument("positional_inputs",
+                    help="Input FASTQ files. Compression format automatically detected. "
+                        "Use '-' for stdin. Alternatively, repeat -i/--input for each file.",
+                    nargs='*')
     parser.add_argument("-i", "--input",
-                        dest="input",
-                        help="Input FASTQ files (explicit). Provide one or more files after the flag.",
-                        nargs='+',
-                        action='extend',
-                        default=[])
+                    dest="flag_inputs",
+                    help="Input FASTQ file (repeat this flag once per file).",
+                    action='append')
+    # Outputs: require one -o per output to avoid greedy parsing
     parser.add_argument("-o", "--output",
-                        help="Output FASTQ files in the same order as inputs. "
-                             "Compression format is determined by file extension. "
-                             "Provide all outputs after a single -o (e.g. '-o out1 out2') "
-                             "or repeat -o multiple times (e.g. '-o out1 -o out2'). "
-                             "An output must be given for each input. Default: stdout.",
-                        nargs='+',
-                        action='extend')
+                    help="Output FASTQ file (repeat this flag once per output). "
+                        "Compression format is determined by extension. "
+                        "Number of outputs must equal number of inputs. Default: stdout.",
+                    action='append')
     parser.add_argument("-l", "--min-length", type=str,
                         help="The minimum length for a read. Use comma-separated "
                              "values for per-read thresholds (e.g., '50,60' for "
@@ -250,12 +245,18 @@ def argument_parser() -> argparse.ArgumentParser:
 
 def main():
     args = argument_parser().parse_args()
+    # Combine positional and flagged inputs
+    inputs: List[str] = []
+    if getattr(args, "positional_inputs", None):
+        inputs.extend(args.positional_inputs)
+    if getattr(args, "flag_inputs", None):
+        inputs.extend(args.flag_inputs)
     output = args.output if args.output else ["-"]
     filters = []
 
     initiate_logger(args.verbose, args.quiet)
     log = logging.getLogger("fastq-filter")
-    log.info(f"input files: {', '.join(args.input)}")
+    log.info(f"input files: {', '.join(inputs)}")
     log.info(f"output files: {', '.join(output)}")
 
     # Parse filter indices (1-based from CLI, converted to 0-based for C)
@@ -292,7 +293,7 @@ def main():
         log.warning("No filters were applied. Was this intentional?")
 
     filter_fastq(filters=filters,
-                 input_files=args.input,
+                 input_files=inputs,
                  output_files=output,
                  compression_level=args.compression_level)
 
