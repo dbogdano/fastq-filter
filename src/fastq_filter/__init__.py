@@ -191,16 +191,26 @@ def initiate_logger(verbose: int = 0, quiet: int = 0):
 def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.description = "Filter FASTQ files on various metrics."
+    # Inputs: support both positional and -i/--input flag; they are combined
     parser.add_argument("input",
                         help="Input FASTQ files. Compression format "
-                             "automatically detected. Use - for stdin.",
-                        nargs='+')
+                             "automatically detected. Use - for stdin. "
+                             "Alternatively, use -i/--input to provide files explicitly.",
+                        nargs='*')
+    parser.add_argument("-i", "--input",
+                        dest="input",
+                        help="Input FASTQ files (explicit). Provide one or more files after the flag.",
+                        nargs='+',
+                        action='extend',
+                        default=[])
     parser.add_argument("-o", "--output",
                         help="Output FASTQ files in the same order as inputs. "
                              "Compression format is determined by file extension. "
-                             "Provide all outputs after a single -o (e.g. '-o out1 out2'). "
+                             "Provide all outputs after a single -o (e.g. '-o out1 out2') "
+                             "or repeat -o multiple times (e.g. '-o out1 -o out2'). "
                              "An output must be given for each input. Default: stdout.",
-                        nargs='+')
+                        nargs='+',
+                        action='extend')
     parser.add_argument("-l", "--min-length", type=str,
                         help="The minimum length for a read. Use comma-separated "
                              "values for per-read thresholds (e.g., '50,60' for "
