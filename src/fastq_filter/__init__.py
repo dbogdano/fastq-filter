@@ -232,7 +232,7 @@ def argument_parser() -> argparse.ArgumentParser:
                              f"Relevant when output files have a .gz "
                              f"extension. Default: {DEFAULT_COMPRESSION_LEVEL}"
                         )
-        parser.add_argument("--threads", type=int, default=0,
+    parser.add_argument("--threads", type=int, default=0,
                         help="Number of threads to use for compression/decompression (passed to xopen). 0 means single-threaded.")
     parser.add_argument("--apply-filters-to", type=str,
                         help="Comma-separated 1-based indices of which reads to filter. "
